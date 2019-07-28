@@ -1,42 +1,37 @@
 package main
 
 import (
-	"crypto/x509"
-	"encoding/pem"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
 
-	flag "github.com/spf13/pflag"
 	"github.com/throttled/throttled"
 	"github.com/throttled/throttled/store/memstore"
-	certUtil "k8s.io/client-go/util/cert"
 )
 
-var (
-	listenAddr   = flag.String("listen-addr", ":8080", "HTTP serving address.")
-	readTimeout  = flag.Duration("read-timeout", 2*time.Minute, "HTTP request timeout.")
-	writeTimeout = flag.Duration("write-timeout", 2*time.Minute, "HTTP response timeout.")
-)
+type verifier func([]byte) (bool, error)
+type rotator func([]byte) ([]byte, error)
 
-// Called on every request to /cert.  Errors will be logged and return a 500.
-type certProvider func() []*x509.Certificate
-type secretChecker func([]byte) (bool, error)
-type secretRotator func([]byte) ([]byte, error)
+type ApiServer struct {
+	mux         *http.ServeMux
+	rateLimiter throttled.HTTPRateLimiter
+	verFn       verifier
+	rotFn       rotator
+}
 
-func httpserver(cp certProvider, sc secretChecker, sr secretRotator) {
-	httpRateLimiter := rateLimter()
-
+func NewApiServer(verFn verifier, rotFn rotator) *ApiServer {
 	mux := http.NewServeMux()
+	rateLimiter := rateLimter()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, "ok\n")
 	})
 
-	mux.Handle("/v1/verify", httpRateLimiter.RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/v1/verify", rateLimiter.RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		content, err := ioutil.ReadAll(r.Body)
 
 		if err != nil {
@@ -45,7 +40,7 @@ func httpserver(cp certProvider, sc secretChecker, sr secretRotator) {
 			return
 		}
 
-		valid, err := sc(content)
+		valid, err := verFn(content)
 
 		if err != nil {
 			log.Printf("Error validating secret: %v", err)
@@ -69,7 +64,7 @@ func httpserver(cp certProvider, sc secretChecker, sr secretRotator) {
 			return
 		}
 
-		newSecret, err := sr(content)
+		newSecret, err := rotFn(content)
 
 		if err != nil {
 			log.Printf("Error rotating secret: %v", err)
@@ -82,19 +77,28 @@ func httpserver(cp certProvider, sc secretChecker, sr secretRotator) {
 		w.Write(newSecret)
 	})
 
-	mux.HandleFunc("/v1/cert.pem", func(w http.ResponseWriter, r *http.Request) {
-		certs := cp()
-		w.Header().Set("Content-Type", "application/x-pem-file")
-		for _, cert := range certs {
-			w.Write(pem.EncodeToMemory(&pem.Block{Type: certUtil.CertificateBlockType, Bytes: cert.Raw}))
-		}
-	})
+	return &ApiServer{
+		mux:         mux,
+		rateLimiter: rateLimter(),
+		verFn:       verFn,
+		rotFn:       rotFn,
+	}
+}
 
+func (a *ApiServer) V1(pattern string, handler http.HandlerFunc) {
+	a.mux.HandleFunc(fmt.Sprintf("/v1/%s", pattern), handler)
+}
+
+func (a *ApiServer) V2(registry KeyRegistry, pattern string, handler http.HandlerFunc) {
+	a.mux.HandleFunc(fmt.Sprintf("/v2/%s/%s", registry.Name(), pattern), handler)
+}
+
+func (a *ApiServer) Listen(listenAddr string, readTimeout time.Duration, writeTimeout time.Duration) {
 	server := http.Server{
-		Addr:         *listenAddr,
-		Handler:      mux,
-		ReadTimeout:  *readTimeout,
-		WriteTimeout: *writeTimeout,
+		Addr:         listenAddr,
+		Handler:      a.mux,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
 	}
 
 	log.Printf("HTTP server serving on %s", server.Addr)
@@ -117,5 +121,4 @@ func rateLimter() throttled.HTTPRateLimiter {
 		RateLimiter: rateLimiter,
 		VaryBy:      &throttled.VaryBy{Path: true, Headers: []string{"X-Forwarded-For"}},
 	}
-
 }

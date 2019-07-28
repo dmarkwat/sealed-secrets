@@ -30,10 +30,9 @@ func hasAction(fake *fake.Clientset, verb, resource string) bool {
 }
 
 func TestInitKeyRegistry(t *testing.T) {
-	rand := testRand()
 	client := fake.NewSimpleClientset()
 
-	registry, err := initKeyRegistry(client, rand, "namespace", "prefix", "label", 1024)
+	registry, err := Newx509KeyRegistry(client, "namespace", "prefix", "label", 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
@@ -47,7 +46,7 @@ func TestInitKeyRegistry(t *testing.T) {
 
 	// Due to limitations of the fake client, we cannot test whether initKeyRegistry is able
 	// to pick up existing keys
-	_, err = initKeyRegistry(client, rand, "namespace", "prefix", "label", 1024)
+	_, err = Newx509KeyRegistry(client, "namespace", "prefix", "label", 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
@@ -57,14 +56,13 @@ func TestInitKeyRegistry(t *testing.T) {
 }
 
 func TestInitKeyRotation(t *testing.T) {
-	rand := testRand()
 	client := fake.NewSimpleClientset()
-	registry, err := initKeyRegistry(client, rand, "namespace", "prefix", "label", 1024)
+	registry, err := Newx509KeyRegistry(client, "namespace", "prefix", "label", 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
 
-	keyGenTrigger, err := initKeyRotation(registry, 0)
+	keyGenTrigger, err := registry.KeyRotation(0)
 	if err != nil {
 		t.Fatalf("initKeyRotation() returned err: %v", err)
 	}
@@ -93,14 +91,13 @@ func TestInitKeyRotation(t *testing.T) {
 }
 
 func TestInitKeyRotationTick(t *testing.T) {
-	rand := testRand()
 	client := fake.NewSimpleClientset()
-	registry, err := initKeyRegistry(client, rand, "namespace", "prefix", "label", 1024)
+	registry, err := Newx509KeyRegistry(client, "namespace", "prefix", "label", 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
 
-	_, err = initKeyRotation(registry, 100*time.Millisecond)
+	_, err = registry.KeyRotation(100 * time.Millisecond)
 	if err != nil {
 		t.Fatalf("initKeyRotation() returned err: %v", err)
 	}
@@ -145,12 +142,12 @@ func TestReuseKey(t *testing.T) {
 
 	client.ClearActions()
 
-	registry, err := initKeyRegistry(client, rand, "namespace", "prefix", SealedSecretsKeyLabel, 1024)
+	registry, err := Newx509KeyRegistry(client, "namespace", "prefix", SealedSecretsKeyLabel, 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
 
-	_, err = initKeyRotation(registry, 0)
+	_, err = registry.KeyRotation(0)
 	if err != nil {
 		t.Fatalf("initKeyRotation() returned err: %v", err)
 	}
@@ -204,12 +201,12 @@ func TestLegacySecret(t *testing.T) {
 
 	client.ClearActions()
 
-	registry, err := initKeyRegistry(client, rand, "namespace", "prefix", SealedSecretsKeyLabel, 1024)
+	registry, err := Newx509KeyRegistry(client, "namespace", "prefix", SealedSecretsKeyLabel, 1024)
 	if err != nil {
 		t.Fatalf("initKeyRegistry() returned err: %v", err)
 	}
 
-	_, err = initKeyRotation(registry, 0)
+	_, err = registry.KeyRotation(0)
 	if err != nil {
 		t.Fatalf("initKeyRotation() returned err: %v", err)
 	}
