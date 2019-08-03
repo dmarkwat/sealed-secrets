@@ -2,14 +2,13 @@ package main
 
 import (
 	"fmt"
+	"github.com/throttled/throttled"
+	"github.com/throttled/throttled/store/memstore"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
-
-	"github.com/throttled/throttled"
-	"github.com/throttled/throttled/store/memstore"
 )
 
 type verifier func([]byte) (bool, error)

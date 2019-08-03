@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/bitnami-labs/sealed-secrets/pkg/crypto"
 	"io"
 	"io/ioutil"
 	"math/big"
@@ -148,7 +149,7 @@ func TestSeal(t *testing.T) {
 	t.Logf("input is: %s", string(inbuf.Bytes()))
 
 	outbuf := bytes.Buffer{}
-	if err := seal(&inbuf, &outbuf, scheme.Codecs, key); err != nil {
+	if err := seal(&inbuf, &outbuf, scheme.Codecs, crypto.X509Sealer(key)); err != nil {
 		t.Fatalf("seal() returned error: %v", err)
 	}
 

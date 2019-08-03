@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rsa"
 	"encoding/base64"
+	"github.com/bitnami-labs/sealed-secrets/pkg/crypto"
 	"io"
 	mathrand "math/rand"
 	"reflect"
@@ -193,12 +194,12 @@ func TestSealRoundTrip(t *testing.T) {
 		},
 	}
 
-	ssecret, err := NewSealedSecret(codecs, &key.PublicKey, &secret)
+	ssecret, err := NewSealedSecret(codecs, "x509", crypto.X509Sealer(&key.PublicKey), &secret)
 	if err != nil {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
-	secret2, err := ssecret.Unseal(codecs, key)
+	secret2, err := ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err != nil {
 		t.Fatalf("Unseal returned error: %v", err)
 	}
@@ -234,12 +235,12 @@ func TestSealRoundTripWithClusterWide(t *testing.T) {
 		},
 	}
 
-	ssecret, err := NewSealedSecret(codecs, &key.PublicKey, &secret)
+	ssecret, err := NewSealedSecret(codecs, "x509", crypto.X509Sealer(&key.PublicKey), &secret)
 	if err != nil {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
-	secret2, err := ssecret.Unseal(codecs, key)
+	secret2, err := ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err != nil {
 		t.Fatalf("Unseal returned error: %v", err)
 	}
@@ -275,14 +276,14 @@ func TestSealRoundTripWithMisMatchClusterWide(t *testing.T) {
 		},
 	}
 
-	ssecret, err := NewSealedSecret(codecs, &key.PublicKey, &secret)
+	ssecret, err := NewSealedSecret(codecs, "x509", crypto.X509Sealer(&key.PublicKey), &secret)
 	if err != nil {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
 	ssecret.ObjectMeta.Annotations[SealedSecretClusterWideAnnotation] = "false"
 
-	_, err = ssecret.Unseal(codecs, key)
+	_, err = ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err == nil {
 		t.Fatalf("Unseal did not return expected error: %v", err)
 	}
@@ -314,12 +315,12 @@ func TestSealRoundTripWithNamespaceWide(t *testing.T) {
 		},
 	}
 
-	ssecret, err := NewSealedSecret(codecs, &key.PublicKey, &secret)
+	ssecret, err := NewSealedSecret(codecs, "x509", crypto.X509Sealer(&key.PublicKey), &secret)
 	if err != nil {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
-	secret2, err := ssecret.Unseal(codecs, key)
+	secret2, err := ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err != nil {
 		t.Fatalf("Unseal returned error: %v", err)
 	}
@@ -355,14 +356,14 @@ func TestSealRoundTripWithMisMatchNamespaceWide(t *testing.T) {
 		},
 	}
 
-	ssecret, err := NewSealedSecret(codecs, &key.PublicKey, &secret)
+	ssecret, err := NewSealedSecret(codecs, "x509", crypto.X509Sealer(&key.PublicKey), &secret)
 	if err != nil {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
 	ssecret.ObjectMeta.Annotations[SealedSecretNamespaceWideAnnotation] = "false"
 
-	_, err = ssecret.Unseal(codecs, key)
+	_, err = ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err == nil {
 		t.Fatalf("Unseal did not return expected error: %v", err)
 	}
@@ -400,7 +401,7 @@ func TestUnsealingV1Format(t *testing.T) {
 		t.Fatalf("NewSealedSecret returned error: %v", err)
 	}
 
-	secret2, err := ssecret.Unseal(codecs, key)
+	secret2, err := ssecret.Unseal(codecs, crypto.X509Unsealer(key))
 	if err != nil {
 		t.Fatalf("Unseal returned error: %v", err)
 	}

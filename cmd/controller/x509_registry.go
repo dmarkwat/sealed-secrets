@@ -4,10 +4,9 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
-	v1 "k8s.io/api/core/v1"
+	"fmt"
+	"github.com/bitnami-labs/sealed-secrets/pkg/crypto"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/kubernetes/scheme"
 	"log"
 	"net/http"
 	"sort"
@@ -19,8 +18,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	certUtil "k8s.io/client-go/util/cert"
 )
-
-const x509_REGISTRY = "x509"
 
 type x509KeyRegistry struct {
 	KeyRegistry
@@ -104,13 +101,19 @@ func (kr *x509KeyRegistry) getCert(keyname string) (*x509.Certificate, error) {
 	return kr.cert, nil
 }
 
-func (kr *x509KeyRegistry) Seal(secret *v1.Secret) (*v1alpha1.SealedSecret, error) {
-	ret, err := ssv1alpha1.NewSealedSecret(scheme.Codecs, &kr.latestPrivateKey().PublicKey, secret)
-	return ret, err
+func (kr *x509KeyRegistry) Seal(plainText []byte, label []byte) ([]byte, error) {
+	return crypto.X509Sealer(&kr.latestPrivateKey().PublicKey)(plainText, label)
+	//return crypto.HybridEncrypt(rand.Reader, &kr.latestPrivateKey().PublicKey, plainText, label)
 }
 
-func (kr *x509KeyRegistry) Unseal(*v1alpha1.SealedSecret) (*v1.Secret, error) {
-	panic("implement me")
+func (kr *x509KeyRegistry) Unseal(data []byte, label []byte) ([]byte, error) {
+	for _, key := range kr.privateKeys {
+		secret, err := crypto.X509Unsealer(key)(data, label)
+		if err == nil {
+			return secret, nil
+		}
+	}
+	return nil, fmt.Errorf("couldn't decrypt secret")
 }
 
 // Initialises the first key and starts the rotation job. returns an early trigger function.
@@ -144,13 +147,21 @@ func (kr *x509KeyRegistry) Init(server *ApiServer) error {
 		return []*x509.Certificate{kr.cert}
 	}
 
-	server.V1("cert.pem", func(w http.ResponseWriter, r *http.Request) {
+	pubkey := func(w http.ResponseWriter, r *http.Request) {
 		certs := cp()
 		w.Header().Set("Content-Type", "application/x-pem-file")
 		for _, cert := range certs {
-			w.Write(pem.EncodeToMemory(&pem.Block{Type: certUtil.CertificateBlockType, Bytes: cert.Raw}))
+			_, _ = w.Write(pem.EncodeToMemory(&pem.Block{Type: certUtil.CertificateBlockType, Bytes: cert.Raw}))
 		}
-	})
+	}
+
+	server.V1("cert.pem", pubkey)
+
+	server.V2(kr, "cert.pem", pubkey)
 
 	return nil
+}
+
+func (kr *x509KeyRegistry) Name() string {
+	return X509Registry.String()
 }

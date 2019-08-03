@@ -50,12 +50,13 @@ const (
 
 // Controller implements the main sealed-secrets-controller loop.
 type Controller struct {
-	queue       workqueue.RateLimitingInterface
-	informer    cache.SharedIndexInformer
-	sclient     v1.SecretsGetter
-	ssclient    ssv1alpha1client.SealedSecretsGetter
-	recorder    record.EventRecorder
-	keyRegistry map[string]KeyRegistry
+	queue               workqueue.RateLimitingInterface
+	informer            cache.SharedIndexInformer
+	sclient             v1.SecretsGetter
+	ssclient            ssv1alpha1client.SealedSecretsGetter
+	recorder            record.EventRecorder
+	keyRegistry         map[RegistryType]KeyRegistry
+	defaultRegistryType RegistryType
 }
 
 func unseal(sclient v1.SecretsGetter, codecs runtimeserializer.CodecFactory, keyRegistry KeyRegistry, ssecret *ssv1alpha1.SealedSecret) error {
@@ -86,7 +87,7 @@ func unseal(sclient v1.SecretsGetter, codecs runtimeserializer.CodecFactory, key
 }
 
 // NewController returns the main sealed-secrets controller loop.
-func NewController(clientset kubernetes.Interface, ssclientset ssclientset.Interface, ssinformer ssinformer.SharedInformerFactory, registries map[string]KeyRegistry) *Controller {
+func NewController(clientset kubernetes.Interface, ssclientset ssclientset.Interface, ssinformer ssinformer.SharedInformerFactory, registries map[RegistryType]KeyRegistry, defaultRegistryType RegistryType) *Controller {
 	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
 
 	ssscheme.AddToScheme(scheme.Scheme)
@@ -121,12 +122,13 @@ func NewController(clientset kubernetes.Interface, ssclientset ssclientset.Inter
 	})
 
 	return &Controller{
-		informer:    informer,
-		queue:       queue,
-		sclient:     clientset.CoreV1(),
-		ssclient:    ssclientset.BitnamiV1alpha1(),
-		recorder:    recorder,
-		keyRegistry: registries,
+		informer:            informer,
+		queue:               queue,
+		sclient:             clientset.CoreV1(),
+		ssclient:            ssclientset.BitnamiV1alpha1(),
+		recorder:            recorder,
+		keyRegistry:         registries,
+		defaultRegistryType: defaultRegistryType,
 	}
 }
 
@@ -316,6 +318,7 @@ func (c *Controller) AttemptUnseal(content []byte) (bool, error) {
 	switch s := object.(type) {
 	case *ssv1alpha1.SealedSecret:
 		if _, err := c.attemptUnseal(s); err != nil {
+			log.Printf("Unseal attempt failed: %e", err)
 			return false, nil
 		}
 		return true, nil
@@ -336,20 +339,15 @@ func (c *Controller) Rotate(content []byte) ([]byte, error) {
 
 	switch s := object.(type) {
 	case *ssv1alpha1.SealedSecret:
-		var registry KeyRegistry
-		var exists bool
-		if s.Spec.Type == nil {
-			registry = c.keyRegistry[x509_REGISTRY]
-		} else {
-			if registry, exists = c.keyRegistry[*s.Spec.Type]; !exists {
-				return nil, fmt.Errorf("%s registry isn't configured", *s.Spec.Type)
-			}
+		reg, err := c.getRegistry(s)
+		if err != nil {
+			return nil, err
 		}
 		secret, err := c.attemptUnseal(s)
 		if err != nil {
 			return nil, fmt.Errorf("Error decrypting secret. %v", err)
 		}
-		resealedSecret, err := registry.Seal(secret)
+		resealedSecret, err := ssv1alpha1.NewSealedSecret(scheme.Codecs, reg.Name(), reg.Seal, secret)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating new sealed secret. %v", err)
 		}
@@ -364,26 +362,30 @@ func (c *Controller) Rotate(content []byte) ([]byte, error) {
 }
 
 func (c *Controller) getRegistry(s *ssv1alpha1.SealedSecret) (KeyRegistry, error) {
-	var registry KeyRegistry
+	var reg KeyRegistry
 	var exists bool
-	if s.Spec.Type == nil {
-		registry = c.keyRegistry[x509_REGISTRY]
+	if len(s.Spec.Registry) == 0 {
+		reg = c.keyRegistry[c.defaultRegistryType]
 	} else {
-		if registry, exists = c.keyRegistry[*s.Spec.Type]; !exists {
-			return nil, fmt.Errorf("%s registry isn't configured", *s.Spec.Type)
+		regType, ok := Registries_type[s.Spec.Registry]
+		if !ok {
+			return nil, fmt.Errorf("%s isn't a recognized keyregistry", s.Spec.Registry)
+		}
+		if reg, exists = c.keyRegistry[regType]; !exists {
+			return nil, fmt.Errorf("%s keyregistry isn't configured", s.Spec.Registry)
 		}
 	}
-	return registry, nil
+	return reg, nil
 }
 
 func (c *Controller) attemptUnseal(ss *ssv1alpha1.SealedSecret) (*corev1.Secret, error) {
-	registry, err := c.getRegistry(ss)
+	reg, err := c.getRegistry(ss)
 	if err != nil {
 		return nil, err
 	}
-	return registry.Unseal(ss)
+	return ss.Unseal(scheme.Codecs, reg.Unseal)
 }
 
 func attemptUnseal(ss *ssv1alpha1.SealedSecret, keyRegistry KeyRegistry) (*corev1.Secret, error) {
-	return keyRegistry.Unseal(ss)
+	return ss.Unseal(scheme.Codecs, keyRegistry.Unseal)
 }

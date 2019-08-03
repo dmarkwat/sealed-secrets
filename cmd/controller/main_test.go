@@ -40,7 +40,7 @@ func TestInitKeyRegistry(t *testing.T) {
 	// Add a key to the controller for second test
 	registry.generateKey()
 	if !hasAction(client, "create", "secrets") {
-		t.Fatalf("Error adding initial key to registry")
+		t.Fatalf("Error adding initial key to keyregistry")
 	}
 	client.ClearActions()
 

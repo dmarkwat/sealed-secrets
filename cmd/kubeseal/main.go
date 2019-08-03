@@ -2,10 +2,12 @@ package main
 
 import (
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	goflag "flag"
 	"fmt"
+	"github.com/bitnami-labs/sealed-secrets/pkg/crypto"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -47,6 +49,8 @@ var (
 	dumpCert       = flag.Bool("fetch-cert", false, "Write certificate to stdout. Useful for later use with --cert")
 	printVersion   = flag.Bool("version", false, "Print version information and exit")
 	validateSecret = flag.Bool("validate", false, "Validate that the sealed secret can be decrypted")
+
+	registryType = flag.String("keyregistry", "x509", "Which keyregistry to use")
 
 	// VERSION set from Makefile
 	VERSION = "UNKNOWN"
@@ -161,7 +165,7 @@ func openCert() (io.ReadCloser, error) {
 	return openCertHTTP(restClient, *controllerNs, *controllerName)
 }
 
-func seal(in io.Reader, out io.Writer, codecs runtimeserializer.CodecFactory, pubKey *rsa.PublicKey) error {
+func seal(in io.Reader, out io.Writer, codecs runtimeserializer.CodecFactory, sealer crypto.Sealer) error {
 	secret, err := readSecret(codecs.UniversalDecoder(), in)
 	if err != nil {
 		return err
@@ -197,7 +201,8 @@ func seal(in io.Reader, out io.Writer, codecs runtimeserializer.CodecFactory, pu
 	secret.SetDeletionTimestamp(nil)
 	secret.DeletionGracePeriodSeconds = nil
 
-	ssecret, err := ssv1alpha1.NewSealedSecret(codecs, pubKey, secret)
+	// todo use explicit keyregistry type
+	ssecret, err := ssv1alpha1.NewSealedSecret(codecs, "", sealer, secret)
 	if err != nil {
 		return err
 	}
@@ -353,7 +358,20 @@ func main() {
 		panic(err.Error())
 	}
 
-	if err := seal(os.Stdin, os.Stdout, scheme.Codecs, pubKey); err != nil {
+	var sealer crypto.Sealer
+	switch *registryType {
+	case "x509":
+		sealer = crypto.X509Sealer(pubKey)
+		break
+	case "cloud-kms":
+		// todo make which sha algorithm dynamic
+		sealer = crypto.CloudKMSSealer(pubKey, sha256.New())
+		break
+	default:
+		panic("unrecognized sealer")
+	}
+
+	if err := seal(os.Stdin, os.Stdout, scheme.Codecs, sealer); err != nil {
 		panic(err.Error())
 	}
 }

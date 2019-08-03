@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"github.com/bitnami-labs/sealed-secrets/pkg/crypto"
 	"io"
 	"io/ioutil"
 	"os"
@@ -103,7 +104,7 @@ var _ = Describe("kubeseal", func() {
 		})
 
 		It("should contain the right value", func() {
-			s, err := ss.Unseal(scheme.Codecs, privKey)
+			s, err := ss.Unseal(scheme.Codecs, crypto.X509Unsealer(privKey))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.Data).To(HaveKeyWithValue("foo", []byte("bar")))
 		})
@@ -122,7 +123,7 @@ var _ = Describe("kubeseal", func() {
 		})
 
 		It("should qualify the Secret", func() {
-			s, err := ss.Unseal(scheme.Codecs, privKey)
+			s, err := ss.Unseal(scheme.Codecs, crypto.X509Unsealer(privKey))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.GetNamespace()).To(Equal(testNs))
 		})
@@ -139,7 +140,7 @@ var _ = Describe("kubeseal", func() {
 		})
 
 		It("should qualify the Secret", func() {
-			s, err := ss.Unseal(scheme.Codecs, privKey)
+			s, err := ss.Unseal(scheme.Codecs, crypto.X509Unsealer(privKey))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.GetNamespace()).To(Equal(testNs))
 		})
@@ -174,7 +175,7 @@ var _ = Describe("kubeseal", func() {
 		})
 
 		It("should output the right value", func() {
-			s, err := ss.Unseal(scheme.Codecs, privKey)
+			s, err := ss.Unseal(scheme.Codecs, crypto.X509Unsealer(privKey))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(s.Data).To(HaveKeyWithValue("foo", []byte("bar")))
 		})

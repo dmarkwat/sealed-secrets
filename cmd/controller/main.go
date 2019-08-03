@@ -29,7 +29,10 @@ var (
 	printVersion    = flag.Bool("version", false, "Print version information and exit")
 	keyRotatePeriod = flag.Duration("rotate-period", 0, "New key generation period (automatic rotation disabled if 0)")
 
-	enabledKeyRegistries = flag.StringArray("registries", []string{"x509"}, "Enabled key registries, including: x509, cloud-kms (default: x509)")
+	enabledKeyRegistries = flag.StringArray("registries", []string{X509Registry.String()}, "Enabled key registries, including: x509, cloud-kms (default: x509)")
+	defaultKeyRegistry   = flag.String("default-keyregistry", "", "Default key keyregistry to use when unspecified in SealedSecret spec; required if > 1 keyregistry is configured")
+
+	cloudKMSKeyName = flag.String("cloudkms-key", "", "Cloud KMS key name")
 
 	listenAddr   = flag.String("listen-addr", ":8080", "HTTP serving address.")
 	readTimeout  = flag.Duration("read-timeout", 2*time.Minute, "HTTP request timeout.")
@@ -90,9 +93,8 @@ func initKeyGenSignalListener(trigger func()) {
 }
 
 func main2() error {
-	registries := map[string]KeyRegistry{}
-	for _, registry := range *enabledKeyRegistries {
-		registries[registry] = nil
+	if len(*enabledKeyRegistries) == 0 {
+		return fmt.Errorf("no registries configured")
 	}
 
 	config, err := rest.InClusterConfig()
@@ -117,28 +119,54 @@ func main2() error {
 		return err
 	}
 
-	for registry, _ := range registries {
+	registries := map[RegistryType]KeyRegistry{}
+	for _, regName := range *enabledKeyRegistries {
+		reg, ok := Registries_type[regName]
+		if !ok {
+			return fmt.Errorf("invalid keyregistry, %s, specified", reg)
+		}
+		registries[reg] = nil
+
 		var keyRegistry KeyRegistry
-		switch registry {
-		case x509_REGISTRY:
+		switch reg {
+		case X509Registry:
 			keyRegistry, err = Newx509KeyRegistry(clientset, myNs, prefix, SealedSecretsKeyLabel, *keySize)
-			if err != nil {
-				return err
-			}
+			break
+		case CloudKMSRegistry:
+			keyRegistry, err = NewCloudKMSKeyRegistry(*cloudKMSKeyName)
 			break
 		default:
+			err = fmt.Errorf("invalid keyregistry in switch--should never be reachable")
 		}
 
-		trigger, err := keyRegistry.KeyRotation(*keyRotatePeriod)
 		if err != nil {
 			return err
 		}
 
-		initKeyGenSignalListener(trigger)
+		registries[reg] = keyRegistry
+	}
+
+	var defaultRegistryType RegistryType
+	if len(*defaultKeyRegistry) > 0 {
+		var ok bool
+		defaultRegistryType, ok = Registries_type[*defaultKeyRegistry]
+		if !ok {
+			return fmt.Errorf("specified default keyregistry, %s, is invalid", *defaultKeyRegistry)
+		}
+	} else {
+		if len(registries) == 1 {
+			if len(*defaultKeyRegistry) == 0 {
+				for regType, _ := range registries {
+					defaultRegistryType = regType
+				}
+			}
+		} else {
+			return fmt.Errorf("no default specified with multiple registries configured")
+		}
 	}
 
 	ssinformer := ssinformers.NewSharedInformerFactory(ssclientset, 0)
-	controller := NewController(clientset, ssclientset, ssinformer, registries)
+	controller := NewController(clientset, ssclientset, ssinformer, registries, defaultRegistryType)
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -146,6 +174,19 @@ func main2() error {
 	go controller.Run(stop)
 
 	server := NewApiServer(controller.AttemptUnseal, controller.Rotate)
+
+	for _, registry := range registries {
+		trigger, err := registry.KeyRotation(*keyRotatePeriod)
+		if err != nil {
+			return err
+		}
+
+		initKeyGenSignalListener(trigger)
+
+		if err := registry.Init(server); err != nil {
+			return fmt.Errorf("error initializing registry, %s: %e", registry.Name(), err)
+		}
+	}
 
 	go server.Listen(*listenAddr, *readTimeout, *writeTimeout)
 

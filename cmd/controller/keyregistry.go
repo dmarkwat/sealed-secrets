@@ -1,15 +1,39 @@
 package main
 
 import (
-	"github.com/bitnami-labs/sealed-secrets/pkg/apis/sealed-secrets/v1alpha1"
-	v1 "k8s.io/api/core/v1"
 	"time"
 )
 
+const (
+	X509Registry     RegistryType = iota
+	CloudKMSRegistry RegistryType = iota
+)
+
+const (
+	X509RegistryName     = "x509"
+	CloudKMSRegistryName = "cloud_kms"
+)
+
+var Registries_name = map[RegistryType]string{
+	X509Registry:     X509RegistryName,
+	CloudKMSRegistry: CloudKMSRegistryName,
+}
+
+var Registries_type = map[string]RegistryType{
+	Registries_name[X509Registry]:     X509Registry,
+	Registries_name[CloudKMSRegistry]: CloudKMSRegistry,
+}
+
+type RegistryType int
+
+func (rt RegistryType) String() string {
+	return Registries_name[rt]
+}
+
 type KeyRegistry interface {
 	Name() string
-	Seal(secret *v1.Secret) (*v1alpha1.SealedSecret, error)
-	Unseal(sealed *v1alpha1.SealedSecret) (*v1.Secret, error)
+	Seal(plainText []byte, label []byte) ([]byte, error)
+	Unseal(data []byte, label []byte) ([]byte, error)
 	KeyRotation(period time.Duration) (func(), error)
 	Init(server *ApiServer) error
 }
